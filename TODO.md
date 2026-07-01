@@ -1,0 +1,8 @@
+- [ ] Update `src/components/FlashSaleBulkEditor.tsx` to improve professional UI:
+  - [ ] Switch primary page background to white (while keeping indigo/purple accent theme)
+  - [ ] Remove non-standard `animate-fade-in` usage (use standard Tailwind transitions only)
+  - [ ] Unify button styling (consistent heights/padding/radius, better hover/focus)
+  - [ ] Improve table UX (sticky header, better truncation, consistent row states)
+  - [ ] Improve modal chrome & accessibility (aria-labels on icon buttons)
+- [ ] Run `npm run lint`
+- [ ] Run `npm run build`

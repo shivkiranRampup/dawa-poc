@@ -1,0 +1,6 @@
+{
+  "name": "Dawa Coupon & Referral Hub",
+  "description": "Dynamic coupon and referral validation engine with real-time checkout simulator, cart threshold promotions, and auto-apply optimizer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
