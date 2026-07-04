@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Coupon, Product, SmartFeeConfig, GiftRule } from '../types';
+import { Coupon, Product, SmartFeeConfig, GiftRule, GiftCatalogItem } from '../types';
 import { INITIAL_PRODUCTS } from '../mockData';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -30,7 +30,8 @@ import {
   Image,
   Link,
   CloudLightning,
-  Gift
+  Gift,
+  Search
 } from 'lucide-react';
 
 const IMAGE_PRESETS = [
@@ -51,21 +52,55 @@ interface CouponCreatorProps {
   onUpdateSmartFeeConfig: (config: SmartFeeConfig) => void;
   giftRules: GiftRule[];
   onUpdateGiftRules: (rules: GiftRule[]) => void;
+  giftCatalog: GiftCatalogItem[];
+  onUpdateGiftCatalog: (rows: GiftCatalogItem[]) => void;
 }
 
-export default function CouponCreator({ 
-  coupons, 
-  onAddCoupon, 
-  onDeleteCoupon, 
+export default function CouponCreator({
+  coupons,
+  onAddCoupon,
+  onDeleteCoupon,
   onToggleActive,
   smartFeeConfig,
   onUpdateSmartFeeConfig,
   giftRules,
-  onUpdateGiftRules
+  onUpdateGiftRules,
+  giftCatalog,
+  onUpdateGiftCatalog
 }: CouponCreatorProps) {
   // Navigation & Toggle states for Smart Admin Workspace
-  const [activeSubSection, setActiveSubSection] = useState<'coupons' | 'smart_fees' | 'gift_rules'>('coupons');
-  const [promoType, setPromoType] = useState<'COUPON' | 'VOUCHER'>('COUPON');
+  const [activeSubSection, setActiveSubSection] = useState<'coupons' | 'smart_fees' | 'gift_rules' | 'gift_catalog'>('coupons');
+
+  // Available gift products = only those mapped & active in the catalog
+  const availableGiftCatalog = giftCatalog.filter(g => g.is_available === 1);
+  const giftCatalogProducts = availableGiftCatalog
+    .map(g => ({ catalog: g, product: INITIAL_PRODUCTS.find(p => p.id === g.product_id) }))
+    .filter((x): x is { catalog: GiftCatalogItem; product: Product } => !!x.product);
+
+  // Gift catalog form
+  const [catalogProductId, setCatalogProductId] = useState('');
+  const [catalogDisplayName, setCatalogDisplayName] = useState('');
+
+  // Coupon registry filters (dashboard display)
+  const [registryStatus, setRegistryStatus] = useState<'all' | 'active' | 'inactive' | 'expired'>('all');
+  const [registrySearch, setRegistrySearch] = useState('');
+
+  const registryCounts = {
+    total: coupons.length,
+    active: coupons.filter(c => c.isActive && new Date() <= new Date(c.endDate)).length,
+    disabled: coupons.filter(c => !c.isActive).length,
+    expired: coupons.filter(c => new Date() > new Date(c.endDate)).length
+  };
+
+  const filteredCoupons = coupons.filter((c) => {
+    const expired = new Date() > new Date(c.endDate);
+    if (registryStatus === 'active' && (!c.isActive || expired)) return false;
+    if (registryStatus === 'inactive' && c.isActive) return false;
+    if (registryStatus === 'expired' && !expired) return false;
+    const q = registrySearch.trim().toLowerCase();
+    if (q && !(c.code.toLowerCase().includes(q) || c.name.toLowerCase().includes(q))) return false;
+    return true;
+  });
 
   // Creator Role state
   const [creatorRole, setCreatorRole] = useState<'Admin' | 'Marketing Manager' | 'Partner'>('Admin');
@@ -308,9 +343,7 @@ export default function CouponCreator({
         campaignUrl.trim() ||
         'https://dawa-website--scratchapp-fee1f.asia-southeast1.hosted.app/',
       imageUrl: imageType === 'custom' ? customImageUrl.trim() : (imageType === 'upload' ? uploadedImageUrl : selectedPresetImage),
-      promo_type: promoType,
-      initial_credit: promoType === 'VOUCHER' ? Number(discountValue) : undefined,
-      remaining_credit: promoType === 'VOUCHER' ? Number(discountValue) : undefined,
+      promo_type: 'COUPON',
       weatherRestriction: weatherRestriction || undefined
     };
 
@@ -361,7 +394,7 @@ export default function CouponCreator({
               v1.4.0-Production
             </span>
           </div>
-          <h2 className="text-xl font-extrabold tracking-tight">Voucher & Coupon Management Engine</h2>
+          <h2 className="text-xl font-extrabold tracking-tight">Coupon Management Engine</h2>
           <p className="text-xs text-slate-400">
             Create, restrict, and publish professional campaign vouchers with live rule validation.
           </p>
@@ -384,7 +417,7 @@ export default function CouponCreator({
           ) : (
             <>
               <PlusCircle className="w-4 h-4 shrink-0" />
-              Launch Voucher / Coupon Creator
+              Launch Coupon Creator
             </>
           )}
         </button>
@@ -416,6 +449,18 @@ export default function CouponCreator({
           <Gift className="w-3.5 h-3.5" />
           Buy X Get Y (BXGY) Rules
         </button>
+        <button
+          type="button"
+          onClick={() => setActiveSubSection('gift_catalog')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-bold text-xs uppercase tracking-wider transition-all cursor-pointer whitespace-nowrap ${
+            activeSubSection === 'gift_catalog'
+              ? 'bg-amber-500 text-white shadow-sm'
+              : 'text-slate-500 hover:text-slate-800 hover:bg-amber-50/50'
+          }`}
+        >
+          <ShoppingBag className="w-3.5 h-3.5" />
+          Gift Product Catalog
+        </button>
       </div>
 
       {/* COLLAPSIBLE FORM CONSOLE */}
@@ -435,7 +480,7 @@ export default function CouponCreator({
                   <div>
                     <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                       <Shield className="w-4 h-4 text-emerald-500" />
-                      Voucher Creation Authority Access Level
+                      Coupon Creation Authority Access Level
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">Different roles have distinct authorization rules and discount caps.</p>
                   </div>
@@ -478,50 +523,6 @@ export default function CouponCreator({
               </div>
 
               <form onSubmit={handleSubmit} className="p-6 space-y-6">
-                {/* Coupon vs Voucher Promotion Format Toggle Buttons on Top */}
-                <div className="bg-slate-50 border border-slate-200/80 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
-                  <div>
-                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                      <Settings className="w-3.5 h-3.5 text-slate-500" />
-                      Campaign Promotion Format
-                    </h4>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
-                      Choose "Coupon" for dynamic, condition-based percent/flat discounts or "Voucher" for health-wallet credits.
-                    </p>
-                  </div>
-                  <div className="inline-flex rounded-xl p-1 bg-slate-200/50 border border-slate-300/40">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPromoType('COUPON');
-                        setDiscountType('percentage');
-                      }}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                        promoType === 'COUPON'
-                          ? 'bg-[#007C7A] text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                      }`}
-                    >
-                      <Tag className="w-3.5 h-3.5" />
-                      Coupon (Discount)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPromoType('VOUCHER');
-                        setDiscountType('flat');
-                      }}
-                      className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                        promoType === 'VOUCHER'
-                          ? 'bg-indigo-600 text-white shadow-xs'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                      }`}
-                    >
-                      <ShoppingBag className="w-3.5 h-3.5" />
-                      Voucher (Wallet Credit)
-                    </button>
-                  </div>
-                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Coupon Code */}
                   <div>
@@ -572,56 +573,49 @@ export default function CouponCreator({
                 {/* Discount Settings */}
                 <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-100">
                   <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3">
-                    {promoType === 'VOUCHER' ? 'Wallet Credit Configuration' : 'Discount Configuration'}
+                    Discount Configuration
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                       <label className="block text-xs text-slate-600 mb-1.5">Value Type</label>
-                      {promoType === 'VOUCHER' ? (
-                        <div className="w-full px-3 py-2 text-xs border border-indigo-200 bg-indigo-50/40 text-indigo-800 rounded-lg font-black uppercase tracking-wider flex items-center gap-1.5">
-                          <ShoppingBag className="w-3.5 h-3.5 text-indigo-600" />
-                          Health Wallet Credit (Debit)
-                        </div>
-                      ) : (
-                        <div className="flex border border-slate-200 rounded-lg overflow-hidden bg-white">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDiscountType('percentage');
-                              setDiscountValue('');
-                            }}
-                            className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                              discountType === 'percentage' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-                            }`}
-                          >
-                            Percentage (%)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDiscountType('flat');
-                              setDiscountValue('');
-                            }}
-                            className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                              discountType === 'flat' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-                            }`}
-                          >
-                            Flat (Rs)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDiscountType('free_delivery');
-                              setDiscountValue('');
-                            }}
-                            className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                              discountType === 'free_delivery' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-                            }`}
-                          >
-                            Free Delivery
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex border border-slate-200 rounded-lg overflow-hidden bg-white">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDiscountType('percentage');
+                            setDiscountValue('');
+                          }}
+                          className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                            discountType === 'percentage' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          Percentage (%)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDiscountType('flat');
+                            setDiscountValue('');
+                          }}
+                          className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                            discountType === 'flat' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          Flat (Rs)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDiscountType('free_delivery');
+                            setDiscountValue('');
+                          }}
+                          className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                            discountType === 'free_delivery' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          Free Delivery
+                        </button>
+                      </div>
                     </div>
 
                     <div>
@@ -635,11 +629,11 @@ export default function CouponCreator({
                       ) : (
                         <>
                           <label className="block text-xs text-slate-600 mb-1.5">
-                            {promoType === 'VOUCHER' ? 'Initial Wallet Credit (Rs)' : `Discount Value ${discountType === 'percentage' ? '(%)' : '(Rs)'}`}
+                            {`Discount Value ${discountType === 'percentage' ? '(%)' : '(Rs)'}`}
                           </label>
                           <input
                             type="number"
-                            placeholder={promoType === 'VOUCHER' ? 'E.G. 1500' : discountType === 'percentage' ? 'E.G. 20' : 'E.G. 150'}
+                            placeholder={discountType === 'percentage' ? 'E.G. 20' : 'E.G. 150'}
                             value={discountValue}
                             onChange={(e) => setDiscountValue(e.target.value === '' ? '' : Number(e.target.value))}
                             className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-1 focus:ring-[#007C7A] focus:outline-none transition-colors bg-white ${
@@ -701,7 +695,7 @@ export default function CouponCreator({
                     <div>
                       <label className="block text-xs text-slate-600 mb-1.5 flex items-center gap-1">
                         <Users className="w-3.5 h-3.5 text-slate-400" />
-                        Loyal User Voucher Access
+                        Loyal User Access
                       </label>
                       <input
                         type="number"
@@ -1106,6 +1100,14 @@ export default function CouponCreator({
 
             <form onSubmit={(e) => {
               e.preventDefault();
+              if (giftCatalogProducts.length === 0) {
+                alert('No gift products available. Add a product to the Gift Product Catalog tab first.');
+                return;
+              }
+              // Ensure the chosen gift product is actually a mapped & active catalog item
+              const chosenGiftId = giftCatalogProducts.some(g => g.product.id === newGiftRuleProductId)
+                ? newGiftRuleProductId
+                : giftCatalogProducts[0].product.id;
               if (!newGiftRuleName) {
                 alert('Please enter a rule name.');
                 return;
@@ -1120,7 +1122,7 @@ export default function CouponCreator({
                 requiredProductId: selectedTriggerTypes.includes('product') ? newGiftRuleRequiredProductId : undefined,
                 requiredProductQty: (selectedTriggerTypes.includes('product') && newGiftRuleRequiredProductId && newGiftRuleRequiredProductQty !== '') ? Number(newGiftRuleRequiredProductQty) : undefined,
                 oncePerUser: newGiftRuleOncePerUser ? true : undefined,
-                giftProductId: newGiftRuleProductId,
+                giftProductId: chosenGiftId,
                 isActive: true
               };
               onUpdateGiftRules([newRule, ...giftRules]);
@@ -1150,17 +1152,25 @@ export default function CouponCreator({
 
                 <div>
                   <label className="block text-slate-700 uppercase tracking-wider mb-1.5 font-bold">Gift Product to Auto-Add (Y Product)</label>
-                  <select
-                    value={newGiftRuleProductId}
-                    onChange={(e) => setNewGiftRuleProductId(e.target.value)}
-                    className="w-full px-3 py-2.5 text-xs border border-slate-200 rounded-xl bg-white font-medium cursor-pointer"
-                  >
-                    {INITIAL_PRODUCTS.map((prod) => (
-                      <option key={prod.id} value={prod.id}>
-                        {prod.name} (Rs {prod.price})
-                      </option>
-                    ))}
-                  </select>
+                  {giftCatalogProducts.length === 0 ? (
+                    <div className="w-full px-3 py-2.5 text-xs border border-amber-200 rounded-xl bg-amber-50 text-amber-800 font-medium flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      No gift products available. Add one in the <strong>Gift Product Catalog</strong> tab first.
+                    </div>
+                  ) : (
+                    <select
+                      value={newGiftRuleProductId}
+                      onChange={(e) => setNewGiftRuleProductId(e.target.value)}
+                      className="w-full px-3 py-2.5 text-xs border border-slate-200 rounded-xl bg-white font-medium cursor-pointer"
+                    >
+                      {giftCatalogProducts.map(({ catalog, product }) => (
+                        <option key={catalog.gift_catalog_id} value={product.id}>
+                          {catalog.display_name} (Rs {product.price})
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <p className="text-[9px] text-slate-400 mt-1">Only products mapped &amp; active in the Gift Product Catalog appear here.</p>
                 </div>
               </div>
 
@@ -1428,6 +1438,158 @@ export default function CouponCreator({
         </div>
       )}
 
+      {/* ================= GIFT PRODUCT CATALOG (mapping) ================= */}
+      {activeSubSection === 'gift_catalog' && (
+        <div className="space-y-6 animate-fade-in">
+          {/* Add-to-catalog console */}
+          <div className="bg-white rounded-2xl border border-slate-200/90 shadow-md p-6 space-y-5 text-left">
+            <div className="border-b border-slate-100 pb-4">
+              <h3 className="text-base font-black text-slate-900 flex items-center gap-2 uppercase tracking-wide">
+                <ShoppingBag className="w-5 h-5 text-amber-600" />
+                Gift Product Catalog
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Map which products can be given away as gifts. Only products added &amp; marked <strong>Available</strong> here
+                can be selected as a gift (Y) product in the Buy X Get Y rules.
+              </p>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!catalogProductId) { alert('Select a product to add to the gift catalog.'); return; }
+                if (giftCatalog.some(g => g.product_id === catalogProductId)) {
+                  alert('This product is already in the gift catalog.');
+                  return;
+                }
+                const prod = INITIAL_PRODUCTS.find(p => p.id === catalogProductId);
+                const newItem: GiftCatalogItem = {
+                  gift_catalog_id: 'GC_' + Math.random().toString(36).substr(2, 9).toUpperCase(),
+                  product_id: catalogProductId,
+                  display_name: catalogDisplayName.trim() || (prod ? `${prod.name} (Gift)` : 'Gift Product'),
+                  is_available: 1,
+                  created_at: new Date().toISOString()
+                };
+                onUpdateGiftCatalog([newItem, ...giftCatalog]);
+                setCatalogProductId('');
+                setCatalogDisplayName('');
+              }}
+              className="grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-4 items-end"
+            >
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Product</label>
+                <select
+                  value={catalogProductId}
+                  onChange={(e) => setCatalogProductId(e.target.value)}
+                  className="w-full px-3 py-2.5 text-xs border border-slate-200 rounded-xl bg-white font-medium cursor-pointer focus:ring-1 focus:ring-amber-500"
+                >
+                  <option value="">-- Select a product to make giftable --</option>
+                  {INITIAL_PRODUCTS.filter(p => !giftCatalog.some(g => g.product_id === p.id)).map((prod) => (
+                    <option key={prod.id} value={prod.id}>
+                      {prod.name} ({prod.category}) - Rs {prod.price}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Display Name <span className="text-slate-400 normal-case font-normal">(optional)</span></label>
+                <input
+                  type="text"
+                  value={catalogDisplayName}
+                  onChange={(e) => setCatalogDisplayName(e.target.value)}
+                  placeholder="e.g. Free Teddy Bear"
+                  className="w-full px-3 py-2.5 text-xs border border-slate-200 rounded-xl bg-white font-medium focus:ring-1 focus:ring-amber-500"
+                />
+              </div>
+              <button
+                type="submit"
+                className="bg-amber-500 hover:bg-amber-600 text-white text-xs font-black px-5 py-2.5 rounded-xl shadow-sm cursor-pointer transition-all flex items-center gap-2 whitespace-nowrap h-fit"
+              >
+                <Plus className="w-4 h-4" /> Add to Catalog
+              </button>
+            </form>
+          </div>
+
+          {/* Catalog grid */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 text-left">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-black text-slate-900 uppercase tracking-wide">Mapped Gift Products</h4>
+              <span className="text-[11px] font-bold text-slate-400">
+                {availableGiftCatalog.length} available / {giftCatalog.length} total
+              </span>
+            </div>
+            {giftCatalog.length === 0 ? (
+              <div className="bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-10 text-center">
+                <ShoppingBag className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                <p className="text-sm font-bold text-slate-600">No gift products mapped yet.</p>
+                <p className="text-xs text-slate-400 mt-1">Add a product above to make it available as a BXGY gift.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {giftCatalog.map((item) => {
+                  const prod = INITIAL_PRODUCTS.find(p => p.id === item.product_id);
+                  const usedByCount = giftRules.filter(r => r.giftProductId === item.product_id).length;
+                  return (
+                    <div
+                      key={item.gift_catalog_id}
+                      className={`border rounded-xl p-4 flex flex-col bg-slate-50 transition-all ${
+                        item.is_available ? 'border-amber-200' : 'border-slate-200 opacity-70'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className={`text-[9px] font-black tracking-wider px-2.5 py-0.5 rounded-full border ${
+                          item.is_available
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-slate-100 text-slate-500 border-slate-200'
+                        }`}>
+                          {item.is_available ? 'AVAILABLE' : 'INACTIVE'}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => onUpdateGiftCatalog(giftCatalog.map(g => g.gift_catalog_id === item.gift_catalog_id ? { ...g, is_available: g.is_available === 1 ? 0 : 1 } : g))}
+                            className="p-1 hover:bg-slate-200 rounded text-slate-500 hover:text-slate-900 cursor-pointer"
+                            title={item.is_available ? 'Mark Inactive' : 'Mark Available'}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (usedByCount > 0 && !confirm(`This gift product is used by ${usedByCount} BXGY rule(s). Remove it from the catalog anyway? Existing rules keep working but you won't be able to pick it for new rules.`)) return;
+                              onUpdateGiftCatalog(giftCatalog.filter(g => g.gift_catalog_id !== item.gift_catalog_id));
+                            }}
+                            className="p-1 hover:bg-red-50 rounded text-red-500 hover:text-red-700 cursor-pointer"
+                            title="Remove from Catalog"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 mt-3">
+                        <div className="w-12 h-12 rounded-lg bg-white border border-slate-200 flex items-center justify-center shrink-0">
+                          <Gift className="w-5 h-5 text-amber-500" />
+                        </div>
+                        <div className="min-w-0">
+                          <h5 className="font-extrabold text-slate-800 text-xs truncate">{item.display_name}</h5>
+                          <p className="text-[10px] text-slate-500 truncate">{prod ? prod.name : item.product_id}</p>
+                          <p className="text-[10px] font-bold text-amber-600 mt-0.5">{prod ? `Rs ${prod.price}` : ''} • {prod?.category || '—'}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 pt-2.5 border-t border-slate-200/70 text-[10px] text-slate-400 font-semibold">
+                        Used by {usedByCount} gift rule{usedByCount === 1 ? '' : 's'}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ACTIVE COUPON MANIFEST (3-COLUMN PROFESSIONAL GRID MATCHING THE CHOSEN VIBE) */}
       {activeSubSection === 'coupons' && (
         <div className="space-y-6">
@@ -1435,26 +1597,66 @@ export default function CouponCreator({
             <div>
               <h3 className="text-lg font-black text-slate-900 flex items-center gap-2 uppercase tracking-wide">
                 <Layers className="w-5 h-5 text-[#007C7A]" />
-                Active Coupon & Voucher Registry
+                Coupon Registry
               </h3>
               <p className="text-xs text-slate-500 mt-1">
-                Active promotional cards synchronizing with the checkout simulator and live cart calculations.
+                Promotional coupon cards synchronizing with the checkout simulator and live cart calculations.
+                <span className="text-slate-400"> Wallet vouchers are managed in the Voucher Manager.</span>
               </p>
             </div>
-            <span className="bg-[#007C7A]/10 text-[#007C7A] text-xs font-black px-3.5 py-1.5 rounded-full border border-[#007C7A]/20 self-start sm:self-auto">
-              {coupons.length} Campaign Rules Loaded
-            </span>
+          </div>
+
+          {/* Summary stat chips */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {[
+              { label: 'Total Coupons', value: registryCounts.total, tone: 'text-slate-900' },
+              { label: 'Currently Active', value: registryCounts.active, tone: 'text-emerald-700' },
+              { label: 'Disabled', value: registryCounts.disabled, tone: 'text-slate-500' },
+              { label: 'Expired', value: registryCounts.expired, tone: 'text-rose-600' }
+            ].map(s => (
+              <div key={s.label} className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-xs">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{s.label}</p>
+                <p className={`text-2xl font-black mt-0.5 ${s.tone}`}>{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Filter toolbar */}
+          <div className="flex flex-col lg:flex-row lg:items-center gap-3 justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Status segment */}
+              <div className="inline-flex rounded-xl p-1 bg-slate-100 border border-slate-200">
+                {([['all', 'All'], ['active', 'Active'], ['inactive', 'Disabled'], ['expired', 'Expired']] as const).map(([val, label]) => (
+                  <button key={val} type="button" onClick={() => setRegistryStatus(val)}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${registryStatus === val ? 'bg-slate-900 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="relative w-full lg:max-w-xs">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+              <input value={registrySearch} onChange={e => setRegistrySearch(e.target.value)} placeholder="Search code or name…"
+                className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-1 focus:ring-[#007C7A] focus:outline-none" />
+            </div>
           </div>
 
         {coupons.length === 0 ? (
           <div className="bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-12 text-center">
             <Tag className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-sm font-bold text-slate-600">No active coupons or vouchers in registry.</p>
+            <p className="text-sm font-bold text-slate-600">No coupons or vouchers in registry.</p>
             <p className="text-xs text-slate-400 mt-1">Click the button above to launch the creation workspace.</p>
+          </div>
+        ) : filteredCoupons.length === 0 ? (
+          <div className="bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-10 text-center">
+            <Search className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+            <p className="text-sm font-bold text-slate-600">No rules match these filters.</p>
+            <button type="button" onClick={() => { setRegistryStatus('all'); setRegistrySearch(''); }}
+              className="text-xs font-bold text-[#007C7A] hover:underline mt-2 cursor-pointer">Clear filters</button>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {coupons.map((coupon) => {
+            {filteredCoupons.map((coupon) => {
               const isExpired = new Date() > new Date(coupon.endDate);
               const isNotStarted = new Date() < new Date(coupon.startDate);
               
@@ -1479,19 +1681,20 @@ export default function CouponCreator({
               const priorityVal = coupon.priority ?? 3;
               const launchUrl = coupon.campaignUrl || `https://rewards.zeno.health/s/${coupon.code.toLowerCase()}`;
               const displayImg = coupon.imageUrl || 'https://images.unsplash.com/photo-1584017911766-d451b3d0e843?auto=format&fit=crop&q=80&w=400';
+              const accentColor = '#007C7A';
 
               return (
-                <div 
-                  key={coupon.id} 
+                <div
+                  key={coupon.id}
                   className="bg-white rounded-2xl shadow-sm hover:shadow-lg transition-all duration-300 flex flex-col relative overflow-hidden border border-slate-200"
-                  style={{ borderTop: '4px solid #007C7A' }}
+                  style={{ borderTop: `4px solid ${accentColor}` }}
                 >
                   {/* Card Header Status Row */}
                   <div className="p-3.5 bg-slate-50/70 border-b border-slate-100 flex items-center justify-between">
                     <span className={`text-[10px] font-black tracking-widest px-2.5 py-1 rounded-full border ${badgeColor}`}>
                       {statusText}
                     </span>
-                    
+
                     <div className="flex items-center gap-1.5">
                       {/* Active Toggle Switch */}
                       <button
@@ -1570,6 +1773,23 @@ export default function CouponCreator({
                       <div className="flex justify-between items-center py-0.5 border-t border-slate-100/60">
                         <span className="text-slate-400 font-medium">Rank/Priority:</span>
                         <span className="font-semibold text-slate-800">{priorityVal}</span>
+                      </div>
+
+                      <div className="flex justify-between items-center py-0.5 border-t border-slate-100/60">
+                        <span className="text-slate-400 font-medium">Times Used:</span>
+                        <span className="font-semibold text-slate-800">
+                          {coupon.usageCount}{' '}
+                          <span className="text-slate-400 font-medium">/ {coupon.perUserLimit} per user</span>
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between items-center py-0.5 border-t border-slate-100/60">
+                        <span className="text-slate-400 font-medium">Stacking:</span>
+                        <span className={`font-bold text-[10px] px-1.5 py-0.5 rounded border ${
+                          coupon.isStackable ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200'
+                        }`}>
+                          {coupon.isStackable ? 'Stackable' : 'Exclusive'}
+                        </span>
                       </div>
 
                       <div className="flex justify-between items-center py-0.5 border-t border-slate-100/60">

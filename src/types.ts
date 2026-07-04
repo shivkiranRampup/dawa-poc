@@ -83,6 +83,64 @@ export interface Coupon {
   weatherRestriction?: 'sunny' | 'rainy' | '';
 }
 
+// ============================================================
+//  VOUCHER MODULE (mirrors PostgreSQL: voucher_templates,
+//  vouchers, voucher_transactions — see database/schema.sql)
+// ============================================================
+
+export interface Customer {
+  customer_id: string;
+  full_name: string;
+  email: string;
+  phone?: string;
+  location?: string;
+  orders_count?: number;
+}
+
+export interface VoucherTemplate {
+  template_id: string;
+  template_name: string;
+  description: string;
+  amount: number;            // face value issued per voucher
+  expiry_days: number;       // days from issue until expiry
+  transferable: boolean;
+  partial_redemption: boolean;
+  created_by: string;        // admin id / name
+  created_at: string;
+}
+
+export type VoucherStatus = 'ACTIVE' | 'USED' | 'EXPIRED' | 'CANCELLED';
+
+export interface Voucher {
+  voucher_id: string;
+  template_id: string;
+  voucher_code: string;
+  customer_id: string | null;   // assigned customer (nullable)
+  employee_id: string | null;   // or assigned employee (nullable)
+  initial_amount: number;
+  remaining_amount: number;
+  expiry_date: string;
+  status: VoucherStatus;
+  issued_by: string;
+  issued_at: string;
+  activated_at: string | null;
+  created_at: string;
+}
+
+export type VoucherTxnType = 'ISSUE' | 'REDEEM' | 'REFUND' | 'EXPIRE' | 'ADJUSTMENT';
+
+export interface VoucherTransaction {
+  transaction_id: string;
+  voucher_id: string;
+  order_id: string | null;
+  transaction_type: VoucherTxnType;
+  amount: number;            // absolute value of the movement
+  balance_after: number;     // remaining balance snapshot after this txn
+  remarks: string;
+  created_by: string;
+  created_at: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -155,6 +213,17 @@ export interface SmartFeeConfig {
   deliverySurcharge: number;
   handlingSurcharge: number;
   exemptionProductId: string; // Product id that waives the delivery & handling fee
+}
+
+// Master list of products that are allowed to be given away as gifts.
+// Mirrors PostgreSQL gift_catalog — only products mapped here can be
+// selected as a BXGY gift (Y) product. (see database/schema.sql)
+export interface GiftCatalogItem {
+  gift_catalog_id: string;
+  product_id: string;
+  display_name: string;
+  is_available: 0 | 1;   // 1 = active/available, 0 = inactive
+  created_at: string;
 }
 
 export interface GiftRule {

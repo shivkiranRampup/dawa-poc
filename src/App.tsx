@@ -20,13 +20,23 @@ import {
   saveStoredSmartFeeConfig,
   getStoredGiftRules,
   saveStoredGiftRules,
+  getStoredGiftCatalog,
+  saveStoredGiftCatalog,
+  getStoredCustomers,
+  getStoredVoucherTemplates,
+  saveStoredVoucherTemplates,
+  getStoredVouchers,
+  saveStoredVouchers,
+  getStoredVoucherTransactions,
+  saveStoredVoucherTransactions,
   INITIAL_PRODUCTS
 } from './mockData';
-import { Coupon, UserProfile, ReferralProgram, Promotion, PromotionUsage, FlashSaleItem } from './types';
+import { Coupon, UserProfile, ReferralProgram, Promotion, PromotionUsage, FlashSaleItem, Customer, VoucherTemplate, Voucher, VoucherTransaction, GiftCatalogItem } from './types';
 import CouponCreator from './components/CouponCreator';
 import CheckoutSimulator from './components/CheckoutSimulator';
 import ReferralSystem from './components/ReferralSystem';
 import { FlashSaleBulkEditor } from './components/FlashSaleBulkEditor';
+import VoucherManager from './components/VoucherManager';
 import CustomerStorefront from './components/CustomerStorefront';
 import { 
   ShoppingBag, 
@@ -38,7 +48,8 @@ import {
   RefreshCw,
   Clock,
   ExternalLink,
-  Zap
+  Zap,
+  Ticket
 } from 'lucide-react';
 
 export default function App() {
@@ -55,9 +66,16 @@ export default function App() {
 
   const [smartFeeConfig, setSmartFeeConfig] = useState(() => getStoredSmartFeeConfig());
   const [giftRules, setGiftRules] = useState(() => getStoredGiftRules());
+  const [giftCatalog, setGiftCatalog] = useState<GiftCatalogItem[]>(() => getStoredGiftCatalog());
+
+  // Voucher module state (mirrors database/schema.sql)
+  const [customers] = useState<Customer[]>(() => getStoredCustomers());
+  const [voucherTemplates, setVoucherTemplates] = useState<VoucherTemplate[]>(() => getStoredVoucherTemplates());
+  const [vouchers, setVouchers] = useState<Voucher[]>(() => getStoredVouchers());
+  const [voucherTransactions, setVoucherTransactions] = useState<VoucherTransaction[]>(() => getStoredVoucherTransactions());
 
   // Navigation
-  const [activeTab, setActiveTab] = useState<'creator' | 'referral' | 'flash'>('creator');
+  const [activeTab, setActiveTab] = useState<'creator' | 'referral' | 'flash' | 'vouchers'>('creator');
   const [viewMode, setViewMode] = useState<'customer' | 'admin'>('customer');
 
   const handleUpdateSmartFeeConfig = (config: any) => {
@@ -68,6 +86,25 @@ export default function App() {
   const handleUpdateGiftRules = (rules: any) => {
     setGiftRules(rules);
     saveStoredGiftRules(rules);
+  };
+
+  const handleUpdateGiftCatalog = (rows: GiftCatalogItem[]) => {
+    setGiftCatalog(rows);
+    saveStoredGiftCatalog(rows);
+  };
+
+  // Voucher module handlers (state + localStorage persistence)
+  const handleUpdateVoucherTemplates = (rows: VoucherTemplate[]) => {
+    setVoucherTemplates(rows);
+    saveStoredVoucherTemplates(rows);
+  };
+  const handleUpdateVouchers = (rows: Voucher[]) => {
+    setVouchers(rows);
+    saveStoredVouchers(rows);
+  };
+  const handleUpdateVoucherTransactions = (rows: VoucherTransaction[]) => {
+    setVoucherTransactions(rows);
+    saveStoredVoucherTransactions(rows);
   };
 
   // Helpers to update state and synchronize with LocalStorage
@@ -229,6 +266,11 @@ export default function App() {
         onOrderPlaced={handleOrderPlaced}
         smartFeeConfig={smartFeeConfig}
         giftRules={giftRules}
+        vouchers={vouchers}
+        voucherTransactions={voucherTransactions}
+        voucherTemplates={voucherTemplates}
+        onUpdateVouchers={handleUpdateVouchers}
+        onUpdateVoucherTransactions={handleUpdateVoucherTransactions}
       />
     );
   }
@@ -310,6 +352,19 @@ export default function App() {
                 Flash Sale Editor
               </button>
 
+              <button
+                type="button"
+                onClick={() => setActiveTab('vouchers')}
+                className={`px-4 py-2 text-xs font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+                  activeTab === 'vouchers'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'bg-white text-indigo-700 border border-indigo-200 hover:bg-indigo-50/40'
+                }`}
+              >
+                <Ticket className="w-3.5 h-3.5" />
+                Voucher Manager
+              </button>
+
               <div className="h-6 w-px bg-slate-200 mx-1 hidden sm:block" />
 
               <button
@@ -339,11 +394,13 @@ export default function App() {
               {activeTab === 'creator' && 'Coupon & Promo Campaign Manager'}
               {activeTab === 'referral' && 'Refer-a-Friend Rewards System'}
               {activeTab === 'flash' && 'Ops Oracle: Flash Sale Bulk Editor'}
+              {activeTab === 'vouchers' && 'Voucher Management Engine'}
             </h2>
             <p className="text-xs text-slate-500 mt-1 leading-relaxed">
               {activeTab === 'creator' && 'Configure custom coupons, wallets, smart weather-based fee rules, and auto-add gift policies.'}
               {activeTab === 'referral' && 'Simulate inviting friends, view reward pipeline stages, adjust referral prize amounts using live slider variables.'}
               {activeTab === 'flash' && 'Manage drug/product flash campaigns, change store group targets, upload CSV catalog files, and update live promotion percentages.'}
+              {activeTab === 'vouchers' && 'Create voucher templates, issue or bulk-generate vouchers, assign them to multiple users, and track every redemption in the ledger.'}
             </p>
           </div>
 
@@ -368,6 +425,8 @@ export default function App() {
               onUpdateSmartFeeConfig={handleUpdateSmartFeeConfig}
               giftRules={giftRules}
               onUpdateGiftRules={handleUpdateGiftRules}
+              giftCatalog={giftCatalog}
+              onUpdateGiftCatalog={handleUpdateGiftCatalog}
             />
           )}
 
@@ -385,6 +444,18 @@ export default function App() {
               storeIds={storeIds}
               onSaveFlashSale={handleSaveFlashSale}
               onResetFlashSale={handleResetFlashSale}
+            />
+          )}
+
+          {activeTab === 'vouchers' && (
+            <VoucherManager
+              templates={voucherTemplates}
+              vouchers={vouchers}
+              transactions={voucherTransactions}
+              customers={customers}
+              onUpdateTemplates={handleUpdateVoucherTemplates}
+              onUpdateVouchers={handleUpdateVouchers}
+              onUpdateTransactions={handleUpdateVoucherTransactions}
             />
           )}
         </div>

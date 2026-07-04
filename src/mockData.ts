@@ -1,4 +1,4 @@
-import { Coupon, Product, UserProfile, ReferralProgram, Referral, Promotion, PromotionUsage, RuleCondition, FlashSaleItem, SmartFeeConfig, GiftRule } from './types';
+import { Coupon, Product, UserProfile, ReferralProgram, Referral, Promotion, PromotionUsage, RuleCondition, FlashSaleItem, SmartFeeConfig, GiftRule, GiftCatalogItem, Customer, VoucherTemplate, Voucher, VoucherTransaction } from './types';
 
 export const INITIAL_PRODUCTS: Product[] = [
   {
@@ -818,6 +818,170 @@ export function getStoredGiftRules(): GiftRule[] {
 
 export function saveStoredGiftRules(rules: GiftRule[]) {
   localStorage.setItem(STORAGE_PREFIX + 'gift_rules', JSON.stringify(rules));
+}
+
+
+// ============================================================
+//  GIFT CATALOG (master giftable-products map — gift_catalog)
+//  Only products listed & available here can be used as a
+//  BXGY gift (Y) product.
+// ============================================================
+export const INITIAL_GIFT_CATALOG: GiftCatalogItem[] = [
+  { gift_catalog_id: 'GC_TOY',    product_id: 'PROD_TOY_GIFT',    display_name: 'Premium Soft Teddy Bear (Gift)',       is_available: 1, created_at: '2026-01-01T00:00:00' },
+  { gift_catalog_id: 'GC_HOODIE', product_id: 'PROD_HOODIE_GIFT', display_name: 'Cozy Women Pastel Pink Hoodie (Gift)', is_available: 1, created_at: '2026-01-01T00:00:00' },
+  { gift_catalog_id: 'GC_VITA',   product_id: 'PROD_Y_GIFT',      display_name: 'Zeno Wellness Daily Multi-Vitamin (Gift)', is_available: 1, created_at: '2026-01-01T00:00:00' }
+];
+
+export function getStoredGiftCatalog(): GiftCatalogItem[] {
+  const data = localStorage.getItem(STORAGE_PREFIX + 'gift_catalog');
+  if (data) { try { return JSON.parse(data); } catch (e) { console.error(e); } }
+  return INITIAL_GIFT_CATALOG;
+}
+export function saveStoredGiftCatalog(rows: GiftCatalogItem[]) {
+  localStorage.setItem(STORAGE_PREFIX + 'gift_catalog', JSON.stringify(rows));
+}
+
+
+// ============================================================
+//  VOUCHER MODULE MOCK DATA (mirrors database/schema.sql)
+// ============================================================
+
+// The "customers" a voucher can be assigned to (reference table).
+export const INITIAL_CUSTOMERS: Customer[] = [
+  { customer_id: 'USR992', full_name: 'Shiv Kiran',   email: 'shivkiran.chitkulwar@rampupinfotech.com', phone: '+91 98765 43210', location: 'Mumbai',    orders_count: 105 },
+  { customer_id: 'USR101', full_name: 'Aditya Sen',    email: 'aditya.sen@example.com',                  phone: '+91 90000 10001', location: 'Pune',      orders_count: 12 },
+  { customer_id: 'USR102', full_name: 'Pooja Sharma',  email: 'pooja.sharma@example.com',                phone: '+91 90000 10002', location: 'Delhi',     orders_count: 4 },
+  { customer_id: 'USR103', full_name: 'Rohan Mehra',   email: 'rohan.mehra@example.com',                 phone: '+91 90000 10003', location: 'Bangalore', orders_count: 27 },
+  { customer_id: 'USR104', full_name: 'Neha Kulkarni', email: 'neha.kulkarni@example.com',               phone: '+91 90000 10004', location: 'Mumbai',    orders_count: 58 },
+  { customer_id: 'USR105', full_name: 'Imran Shaikh',  email: 'imran.shaikh@example.com',                phone: '+91 90000 10005', location: 'Pune',      orders_count: 3 }
+];
+
+export const INITIAL_VOUCHER_TEMPLATES: VoucherTemplate[] = [
+  {
+    template_id: 'VT_WELCOME500',
+    template_name: 'Welcome Health Wallet ₹500',
+    description: 'A ₹500 wallet credit issued to onboard new customers. Redeemable across multiple orders.',
+    amount: 500,
+    expiry_days: 180,
+    transferable: false,
+    partial_redemption: true,
+    created_by: 'Admin',
+    created_at: '2026-01-01T00:00:00'
+  },
+  {
+    template_id: 'VT_GIFT1000',
+    template_name: 'Gift Card ₹1000',
+    description: 'A transferable ₹1000 gift voucher — great for corporate gifting and festive campaigns.',
+    amount: 1000,
+    expiry_days: 365,
+    transferable: true,
+    partial_redemption: true,
+    created_by: 'Admin',
+    created_at: '2026-01-01T00:00:00'
+  },
+  {
+    template_id: 'VT_REFUND',
+    template_name: 'Order Refund Voucher',
+    description: 'Store-credit voucher issued when a customer order is refunded. Non-transferable, single-use style.',
+    amount: 0,
+    expiry_days: 90,
+    transferable: false,
+    partial_redemption: false,
+    created_by: 'Admin',
+    created_at: '2026-01-01T00:00:00'
+  }
+];
+
+export const INITIAL_VOUCHERS: Voucher[] = [
+  {
+    voucher_id: 'VCH-0001',
+    template_id: 'VT_WELCOME500',
+    voucher_code: 'DAWA-WEL5-A1B2',
+    customer_id: 'USR992',
+    employee_id: null,
+    initial_amount: 500,
+    remaining_amount: 350,
+    expiry_date: '2027-06-30T23:59:59',
+    status: 'ACTIVE',
+    issued_by: 'Admin',
+    issued_at: '2026-01-05T09:00:00',
+    activated_at: '2026-01-05T09:00:00',
+    created_at: '2026-01-05T09:00:00'
+  },
+  {
+    voucher_id: 'VCH-0002',
+    template_id: 'VT_GIFT1000',
+    voucher_code: 'DAWA-GFT1-C3D4',
+    customer_id: 'USR101',
+    employee_id: null,
+    initial_amount: 1000,
+    remaining_amount: 1000,
+    expiry_date: '2027-01-05T23:59:59',
+    status: 'ACTIVE',
+    issued_by: 'Admin',
+    issued_at: '2026-01-05T09:05:00',
+    activated_at: '2026-01-05T09:05:00',
+    created_at: '2026-01-05T09:05:00'
+  },
+  {
+    voucher_id: 'VCH-0003',
+    template_id: 'VT_WELCOME500',
+    voucher_code: 'DAWA-WEL5-E5F6',
+    customer_id: 'USR104',
+    employee_id: null,
+    initial_amount: 500,
+    remaining_amount: 0,
+    expiry_date: '2026-06-30T23:59:59',
+    status: 'USED',
+    issued_by: 'Admin',
+    issued_at: '2026-01-06T11:00:00',
+    activated_at: '2026-01-06T11:00:00',
+    created_at: '2026-01-06T11:00:00'
+  }
+];
+
+export const INITIAL_VOUCHER_TRANSACTIONS: VoucherTransaction[] = [
+  { transaction_id: 'VTX-0001', voucher_id: 'VCH-0001', order_id: null,          transaction_type: 'ISSUE',  amount: 500, balance_after: 500, remarks: 'Voucher issued from template Welcome Health Wallet ₹500', created_by: 'Admin', created_at: '2026-01-05T09:00:00' },
+  { transaction_id: 'VTX-0002', voucher_id: 'VCH-0001', order_id: 'ORD-5521',    transaction_type: 'REDEEM', amount: 150, balance_after: 350, remarks: 'Partial redemption at checkout',                        created_by: 'USR992', created_at: '2026-02-10T18:22:00' },
+  { transaction_id: 'VTX-0003', voucher_id: 'VCH-0002', order_id: null,          transaction_type: 'ISSUE',  amount: 1000, balance_after: 1000, remarks: 'Voucher issued from template Gift Card ₹1000',        created_by: 'Admin', created_at: '2026-01-05T09:05:00' },
+  { transaction_id: 'VTX-0004', voucher_id: 'VCH-0003', order_id: null,          transaction_type: 'ISSUE',  amount: 500, balance_after: 500, remarks: 'Voucher issued from template Welcome Health Wallet ₹500', created_by: 'Admin', created_at: '2026-01-06T11:00:00' },
+  { transaction_id: 'VTX-0005', voucher_id: 'VCH-0003', order_id: 'ORD-5610',    transaction_type: 'REDEEM', amount: 500, balance_after: 0,   remarks: 'Full redemption — voucher exhausted',                   created_by: 'USR104', created_at: '2026-03-01T14:40:00' }
+];
+
+export function getStoredCustomers(): Customer[] {
+  const data = localStorage.getItem(STORAGE_PREFIX + 'customers');
+  if (data) { try { return JSON.parse(data); } catch (e) { console.error(e); } }
+  return INITIAL_CUSTOMERS;
+}
+export function saveStoredCustomers(rows: Customer[]) {
+  localStorage.setItem(STORAGE_PREFIX + 'customers', JSON.stringify(rows));
+}
+
+export function getStoredVoucherTemplates(): VoucherTemplate[] {
+  const data = localStorage.getItem(STORAGE_PREFIX + 'voucher_templates');
+  if (data) { try { return JSON.parse(data); } catch (e) { console.error(e); } }
+  return INITIAL_VOUCHER_TEMPLATES;
+}
+export function saveStoredVoucherTemplates(rows: VoucherTemplate[]) {
+  localStorage.setItem(STORAGE_PREFIX + 'voucher_templates', JSON.stringify(rows));
+}
+
+export function getStoredVouchers(): Voucher[] {
+  const data = localStorage.getItem(STORAGE_PREFIX + 'vouchers');
+  if (data) { try { return JSON.parse(data); } catch (e) { console.error(e); } }
+  return INITIAL_VOUCHERS;
+}
+export function saveStoredVouchers(rows: Voucher[]) {
+  localStorage.setItem(STORAGE_PREFIX + 'vouchers', JSON.stringify(rows));
+}
+
+export function getStoredVoucherTransactions(): VoucherTransaction[] {
+  const data = localStorage.getItem(STORAGE_PREFIX + 'voucher_transactions');
+  if (data) { try { return JSON.parse(data); } catch (e) { console.error(e); } }
+  return INITIAL_VOUCHER_TRANSACTIONS;
+}
+export function saveStoredVoucherTransactions(rows: VoucherTransaction[]) {
+  localStorage.setItem(STORAGE_PREFIX + 'voucher_transactions', JSON.stringify(rows));
 }
 
 

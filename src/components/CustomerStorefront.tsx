@@ -1,6 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { Product, Coupon, FlashSaleItem, CartItem, UserProfile, Promotion, PromotionUsage, SmartFeeConfig, GiftRule } from '../types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Product, Coupon, FlashSaleItem, CartItem, UserProfile, Promotion, PromotionUsage, SmartFeeConfig, GiftRule, Voucher, VoucherTransaction, VoucherTemplate } from '../types';
 import CheckoutSimulator from './CheckoutSimulator';
+import MyVouchers from './MyVouchers';
 import { 
   ShoppingBag, 
   Tag, 
@@ -23,7 +24,9 @@ import {
   HeartHandshake, 
   Sparkles,
   RotateCcw,
-  CloudLightning
+  CloudLightning,
+  Ticket,
+  Wallet
 } from 'lucide-react';
 
 interface CustomerStorefrontProps {
@@ -41,6 +44,11 @@ interface CustomerStorefrontProps {
   onOrderPlaced: (couponCode?: string, discountAmount?: number) => void;
   smartFeeConfig: SmartFeeConfig;
   giftRules: GiftRule[];
+  vouchers: Voucher[];
+  voucherTransactions: VoucherTransaction[];
+  voucherTemplates: VoucherTemplate[];
+  onUpdateVouchers: (rows: Voucher[]) => void;
+  onUpdateVoucherTransactions: (rows: VoucherTransaction[]) => void;
 }
 
 interface Address {
@@ -71,10 +79,20 @@ export default function CustomerStorefront({
   setPromotionUsages,
   onOrderPlaced,
   smartFeeConfig,
-  giftRules
+  giftRules,
+  vouchers,
+  voucherTransactions,
+  voucherTemplates,
+  onUpdateVouchers,
+  onUpdateVoucherTransactions
 }: CustomerStorefrontProps) {
   // Storefront active tab/page
-  const [activePage, setActivePage] = useState<'browse' | 'checkout'>('browse');
+  const [activePage, setActivePage] = useState<'browse' | 'checkout' | 'vouchers'>('browse');
+
+  // Count of the shopper's active vouchers (for the header badge)
+  const myActiveVoucherCount = vouchers.filter(
+    v => v.customer_id === userProfile.id && v.status === 'ACTIVE'
+  ).length;
 
   // Customer state
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -327,6 +345,28 @@ export default function CustomerStorefront({
     handleAddToCart(product);
     setActivePage('checkout');
   };
+
+  // Signature of the user-added (non-gift) portion of the cart. Gift items are
+  // excluded so that adding/removing gifts never re-triggers the effect below.
+  const userCartSignature = useMemo(
+    () => cart.filter(i => !i.isGift).map(i => `${i.product.id}:${i.quantity}`).join('|'),
+    [cart]
+  );
+
+  // Single source of truth for BXGY gifts: whenever the user's cart (or the
+  // gift rules / order history that gate them) changes — from THIS page or the
+  // checkout page — re-evaluate which free gifts belong in the cart. This makes
+  // an unlocked gift actually appear in the cart no matter where it was unlocked.
+  useEffect(() => {
+    setCart(prev => {
+      const recalced = recalculateCartGifts(prev);
+      const prevGiftIds = prev.filter(i => i.isGift).map(i => i.product.id).sort().join(',');
+      const nextGiftIds = recalced.filter(i => i.isGift).map(i => i.product.id).sort().join(',');
+      if (prevGiftIds === nextGiftIds) return prev; // no gift change → avoid render loop
+      return recalced;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userCartSignature, giftRules, userProfile.previousOrdersCount]);
 
   // Clear filters
   const handleResetFilters = () => {
@@ -678,6 +718,24 @@ export default function CustomerStorefront({
                 <span>Go to Admin Dashboard</span>
               </button>
 
+              {/* My Vouchers Button */}
+              <button
+                type="button"
+                onClick={() => setActivePage(activePage === 'vouchers' ? 'browse' : 'vouchers')}
+                className={`relative p-3 rounded-full transition-colors cursor-pointer ${
+                  activePage === 'vouchers' ? 'bg-indigo-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-800'
+                }`}
+                aria-label="My Vouchers"
+                title="My Vouchers"
+              >
+                <Ticket className="w-5 h-5" />
+                {myActiveVoucherCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-indigo-600 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-xs ring-2 ring-white">
+                    {myActiveVoucherCount}
+                  </span>
+                )}
+              </button>
+
               {/* Interactive Cart Button */}
               <button
                 type="button"
@@ -802,6 +860,10 @@ export default function CustomerStorefront({
               setCart={setCart}
               smartFeeConfig={smartFeeConfig}
               giftRules={giftRules}
+              vouchers={vouchers}
+              voucherTransactions={voucherTransactions}
+              onUpdateVouchers={onUpdateVouchers}
+              onUpdateVoucherTransactions={onUpdateVoucherTransactions}
             />
           </div>
         ) : activePage === 'browse' ? (
@@ -1079,6 +1141,16 @@ export default function CustomerStorefront({
             </div>
 
           </div>
+        ) : activePage === 'vouchers' ? (
+          /* ================= PAGE: MY VOUCHERS ================= */
+          <MyVouchers
+            customerId={userProfile.id}
+            customerName={userProfile.name}
+            vouchers={vouchers}
+            transactions={voucherTransactions}
+            templates={voucherTemplates}
+            onGoShopping={() => setActivePage('browse')}
+          />
         ) : (
           /* ================= PAGE 2: CHECKOUT / CART PAGE ================= */
           <div className="space-y-6">

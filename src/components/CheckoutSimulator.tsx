@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Coupon, Product, CartItem, UserProfile, Promotion, PromotionUsage, FlashSaleItem, SmartFeeConfig, GiftRule } from '../types';
+import { Coupon, Product, CartItem, UserProfile, Promotion, PromotionUsage, FlashSaleItem, SmartFeeConfig, GiftRule, Voucher, VoucherTransaction } from '../types';
 import { INITIAL_PRODUCTS, saveStoredPromotions, saveStoredPromotionUsages } from '../mockData';
 import { 
   ShoppingBag, 
@@ -27,7 +27,9 @@ import {
   CheckCircle,
   XCircle,
   Zap,
-  CloudLightning
+  CloudLightning,
+  Wallet,
+  Ticket
 } from 'lucide-react';
 
 interface CheckoutSimulatorProps {
@@ -45,11 +47,15 @@ interface CheckoutSimulatorProps {
   setCart?: React.Dispatch<React.SetStateAction<CartItem[]>>;
   smartFeeConfig?: SmartFeeConfig;
   giftRules?: GiftRule[];
+  vouchers?: Voucher[];
+  voucherTransactions?: VoucherTransaction[];
+  onUpdateVouchers?: (rows: Voucher[]) => void;
+  onUpdateVoucherTransactions?: (rows: VoucherTransaction[]) => void;
 }
 
-export default function CheckoutSimulator({ 
-  coupons, 
-  userProfile, 
+export default function CheckoutSimulator({
+  coupons,
+  userProfile,
   onChangeUserProfile,
   onOrderPlaced,
   promotions,
@@ -61,7 +67,11 @@ export default function CheckoutSimulator({
   cart: externalCart,
   setCart: externalSetCart,
   smartFeeConfig,
-  giftRules
+  giftRules,
+  vouchers = [],
+  voucherTransactions = [],
+  onUpdateVouchers,
+  onUpdateVoucherTransactions
 }: CheckoutSimulatorProps) {
   // Cart state fallback
   const [localCart, localSetCart] = useState<CartItem[]>([]);
@@ -88,6 +98,11 @@ export default function CheckoutSimulator({
   const [reservationActive, setReservationActive] = useState<boolean>(false);
   const [activeReservationId, setActiveReservationId] = useState<string>('');
   const [lastSavedVoucherDeduction, setLastSavedVoucherDeduction] = useState<number>(0);
+
+  // Wallet voucher redemption (from the Voucher Manager / My Vouchers).
+  // Customers can stack several of their own vouchers on one order, so this
+  // holds an ordered list of the applied voucher ids (first applied drawn first).
+  const [appliedVoucherIds, setAppliedVoucherIds] = useState<string[]>([]);
 
   // Reservation timer effect for distributed locks (CPN_RES expiration -> CPN_REL)
   React.useEffect(() => {
@@ -537,6 +552,49 @@ export default function CheckoutSimulator({
     return config.handlingSurcharge || 0;
   }, [cart, smartFeeConfig]);
 
+  // --- Wallet voucher redemption (Voucher Manager balances) ---
+  const myRedeemableVouchers = useMemo(() => {
+    const now = Date.now();
+    return vouchers.filter(v =>
+      v.customer_id === userProfile.id &&
+      v.status === 'ACTIVE' &&
+      v.remaining_amount > 0 &&
+      (!v.expiry_date || new Date(v.expiry_date).getTime() > now)
+    );
+  }, [vouchers, userProfile.id]);
+
+  const couponDiscount = activeCouponDetails?.isValid ? activeCouponDetails.discountAmount : 0;
+  const payableBeforeVoucher = Math.max(0, cartSubtotal + deliveryFee + handlingFee - couponDiscount);
+
+  // Applied vouchers in the order the customer added them (ignoring any that
+  // are no longer redeemable, e.g. fully spent by a previous order).
+  const appliedVouchers = useMemo(
+    () =>
+      appliedVoucherIds
+        .map(id => myRedeemableVouchers.find(v => v.voucher_id === id))
+        .filter((v): v is Voucher => Boolean(v)),
+    [appliedVoucherIds, myRedeemableVouchers]
+  );
+
+  // Greedily draw down the remaining bill across the stacked vouchers so a
+  // customer can spend the full balance of several vouchers on one order.
+  const voucherAllocations = useMemo(() => {
+    let remaining = payableBeforeVoucher;
+    return appliedVouchers.map(voucher => {
+      const used = Math.min(voucher.remaining_amount, remaining);
+      remaining -= used;
+      return { voucher, used };
+    });
+  }, [appliedVouchers, payableBeforeVoucher]);
+
+  const voucherRedemption = voucherAllocations.reduce((sum, a) => sum + a.used, 0);
+  const finalPayable = Math.max(0, payableBeforeVoucher - voucherRedemption);
+
+  const toggleVoucher = (id: string) =>
+    setAppliedVoucherIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+
   const thresholdStatus = useMemo(() => {
     const total = cartSubtotal;
     if (total === 0) {
@@ -774,14 +832,46 @@ export default function CheckoutSimulator({
       saveStoredPromotions(updatedPromos);
     }
 
+    // 2b. Redeem the applied wallet vouchers: deduct each voucher's allocated
+    //     share of the bill + write one REDEEM ledger entry per voucher.
+    const redeemedAllocations = voucherAllocations.filter(a => a.used > 0);
+    if (redeemedAllocations.length > 0 && onUpdateVouchers && onUpdateVoucherTransactions) {
+      const balances = new Map<string, number>(
+        redeemedAllocations.map(a => [a.voucher.voucher_id, Math.max(0, a.voucher.remaining_amount - a.used)])
+      );
+      onUpdateVouchers(
+        vouchers.map(v =>
+          balances.has(v.voucher_id)
+            ? { ...v, remaining_amount: balances.get(v.voucher_id)!, status: balances.get(v.voucher_id)! === 0 ? 'USED' : v.status }
+            : v
+        )
+      );
+      const now = Date.now();
+      onUpdateVoucherTransactions([
+        ...redeemedAllocations.map((a, i) => ({
+          transaction_id: `VTX-${(now + i).toString(36).toUpperCase()}`,
+          voucher_id: a.voucher.voucher_id,
+          order_id: finalOrdId,
+          transaction_type: 'REDEEM' as const,
+          amount: a.used,
+          balance_after: balances.get(a.voucher.voucher_id)!,
+          remarks: `Redeemed at checkout for order ${finalOrdId}`,
+          created_by: userProfile.id,
+          created_at: new Date().toISOString()
+        })),
+        ...voucherTransactions
+      ]);
+    }
+
     // 3. Complete order triggers standard state shifts (previous orders count +1, local coupon use count)
     onOrderPlaced(code, discount);
-    
+
     // Clear cart and advance step
     setCart([]);
     setCheckoutStep('success');
     setActiveReservationId('');
     setSelectedCouponId(null);
+    setAppliedVoucherIds([]);
   };
 
   return (
@@ -1082,41 +1172,68 @@ export default function CheckoutSimulator({
                 </div>
               </div>
             ) : (
-              <div className="space-y-3 max-h-[220px] overflow-y-auto pr-1">
+              <div className="space-y-3 max-h-[240px] overflow-y-auto pr-1">
                 {cart.map((item) => (
-                  <div key={item.product.id} className="flex items-center justify-between text-xs pb-3 border-b border-slate-100">
-                    <div className="flex-1 min-w-0 pr-3">
-                      <p className="font-semibold text-slate-800 truncate">{item.product.name}</p>
-                      <p className="text-[10px] text-slate-400 flex flex-wrap items-center gap-1.5 mt-0.5">
-                        {item.product.isRx ? (
-                          <span className="text-red-500 font-semibold bg-red-50 px-1 rounded">Rx (Non-discountable)</span>
-                        ) : (
-                          <span className="text-emerald-600 font-semibold bg-emerald-50 px-1 rounded">OTC (Eligible)</span>
-                        )}
-                        {item.product.brand && (
-                          <span className="text-pink-700 font-semibold bg-pink-50 px-1 rounded">Brand: {item.product.brand}</span>
-                        )}
-                        {getActiveFlashSale(item.product.id) ? (
-                          <span>
-                            <span className="line-through text-slate-400">Rs {item.product.price}</span>{' '}
-                            <span className="text-emerald-700 font-bold">Rs {getProductEffectivePrice(item.product)}</span> × {item.quantity}
+                  item.isGift ? (
+                    /* ===== FREE GIFT ROW (auto-added by a BXGY campaign) ===== */
+                    <div
+                      key={`gift-${item.product.id}`}
+                      className="relative flex items-center justify-between text-xs p-2.5 rounded-xl border border-dashed border-amber-300 bg-gradient-to-br from-amber-50 to-pink-50/40 animate-fade-in"
+                    >
+                      <div className="flex-1 min-w-0 pr-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 bg-amber-400 text-slate-900 text-[9px] font-black uppercase tracking-wide px-1.5 py-0.5 rounded-full">
+                            <Gift className="w-2.5 h-2.5" /> Free Gift
                           </span>
-                        ) : (
-                          <span>Rs {item.product.price} × {item.quantity}</span>
-                        )}
-                      </p>
+                          <p className="font-bold text-amber-900 truncate">{item.product.name}</p>
+                        </div>
+                        <p className="text-[10px] text-amber-700/80 flex flex-wrap items-center gap-1.5 mt-1">
+                          <span className="font-semibold">Unlocked by a Buy&nbsp;X&nbsp;Get&nbsp;Y campaign</span>
+                          <span className="text-amber-400">•</span>
+                          <span className="line-through text-slate-400">Rs {item.product.price}</span>
+                          <span>× {item.quantity}</span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="font-black text-emerald-600 uppercase tracking-wide">Free</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold text-slate-900">Rs {getProductEffectivePrice(item.product) * item.quantity}</span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveFromCart(item.product.id)}
-                        className="text-slate-300 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                  ) : (
+                    /* ===== NORMAL PAID ROW ===== */
+                    <div key={item.product.id} className="flex items-center justify-between text-xs pb-3 border-b border-slate-100">
+                      <div className="flex-1 min-w-0 pr-3">
+                        <p className="font-semibold text-slate-800 truncate">{item.product.name}</p>
+                        <p className="text-[10px] text-slate-400 flex flex-wrap items-center gap-1.5 mt-0.5">
+                          {item.product.isRx ? (
+                            <span className="text-red-500 font-semibold bg-red-50 px-1 rounded">Rx (Non-discountable)</span>
+                          ) : (
+                            <span className="text-emerald-600 font-semibold bg-emerald-50 px-1 rounded">OTC (Eligible)</span>
+                          )}
+                          {item.product.brand && (
+                            <span className="text-pink-700 font-semibold bg-pink-50 px-1 rounded">Brand: {item.product.brand}</span>
+                          )}
+                          {getActiveFlashSale(item.product.id) ? (
+                            <span>
+                              <span className="line-through text-slate-400">Rs {item.product.price}</span>{' '}
+                              <span className="text-emerald-700 font-bold">Rs {getProductEffectivePrice(item.product)}</span> × {item.quantity}
+                            </span>
+                          ) : (
+                            <span>Rs {item.product.price} × {item.quantity}</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-bold text-slate-900">Rs {getProductEffectivePrice(item.product) * item.quantity}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFromCart(item.product.id)}
+                          className="text-slate-300 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  )
                 ))}
               </div>
             )}
@@ -1444,6 +1561,82 @@ export default function CheckoutSimulator({
                     </div>
                   )}
 
+                  {/* Wallet Voucher Redemption */}
+                  <div className="mb-4 bg-indigo-50/40 border border-indigo-100 rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                        <Wallet className="w-3.5 h-3.5 text-indigo-600" />
+                        Apply Wallet Voucher
+                      </span>
+                      {myRedeemableVouchers.length > 0 && (
+                        <span className="text-[10px] font-semibold text-indigo-600 bg-white border border-indigo-150 px-1.5 py-0.5 rounded-full">
+                          {myRedeemableVouchers.length} available
+                        </span>
+                      )}
+                    </div>
+
+                    {myRedeemableVouchers.length === 0 ? (
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        You have no active vouchers. Vouchers assigned to you from the Voucher Manager appear here and in “My Vouchers”.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {/* Applied vouchers (stackable) — each draws down the bill in turn */}
+                        {voucherAllocations.map(({ voucher, used }) => (
+                          <div
+                            key={voucher.voucher_id}
+                            className="flex items-center justify-between bg-white border border-indigo-200 rounded-lg px-3 py-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-slate-800 font-mono truncate flex items-center gap-1.5">
+                                <Ticket className="w-3.5 h-3.5 text-indigo-500" /> {voucher.voucher_code}
+                              </p>
+                              <p className="text-[10px] text-slate-500 mt-0.5">
+                                Balance Rs {voucher.remaining_amount} • redeeming <span className="font-bold text-indigo-700">Rs {used}</span>
+                                {used === 0 && <span className="text-slate-400"> (bill already covered)</span>}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleVoucher(voucher.voucher_id)}
+                              className="text-[11px] font-bold text-rose-600 hover:text-rose-800 cursor-pointer shrink-0 ml-2"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+
+                        {/* Remaining vouchers still available to stack */}
+                        {myRedeemableVouchers
+                          .filter(v => !appliedVoucherIds.includes(v.voucher_id))
+                          .map(v => (
+                            <button
+                              key={v.voucher_id}
+                              type="button"
+                              onClick={() => toggleVoucher(v.voucher_id)}
+                              className="w-full flex items-center justify-between bg-white border border-slate-200 hover:border-indigo-400 rounded-lg px-3 py-2 text-left transition-all cursor-pointer group"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-800 font-mono truncate flex items-center gap-1.5">
+                                  <Ticket className="w-3.5 h-3.5 text-indigo-400 group-hover:text-indigo-600" /> {v.voucher_code}
+                                </p>
+                                <p className="text-[10px] text-slate-400 mt-0.5">Balance Rs {v.remaining_amount} • expires {new Date(v.expiry_date).toLocaleDateString('en-IN')}</p>
+                              </div>
+                              <span className="text-[11px] font-black text-indigo-600 shrink-0 ml-2 group-hover:underline">
+                                {appliedVoucherIds.length > 0 ? '+ Add' : 'Apply'}
+                              </span>
+                            </button>
+                          ))}
+
+                        {voucherRedemption > 0 && appliedVouchers.length > 1 && (
+                          <p className="text-[10px] font-bold text-indigo-700 text-right pt-0.5">
+                            {appliedVouchers.length} vouchers stacked • total credit Rs {voucherRedemption}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
                   {/* Checkout Cost breakdown */}
                   <div className="pt-4 border-t border-slate-100 space-y-2 text-xs">
                     <div className="flex justify-between text-slate-600">
@@ -1479,10 +1672,16 @@ export default function CheckoutSimulator({
                         <span>- Rs {activeCouponDetails.discountAmount}</span>
                       </div>
                     )}
-                    
+                    {voucherRedemption > 0 && (
+                      <div className="flex justify-between text-indigo-700 font-semibold bg-indigo-50/60 p-2 rounded-lg">
+                        <span>Voucher Redeemed ({appliedVouchers.length > 1 ? `${appliedVouchers.length} vouchers` : appliedVouchers[0]?.voucher_code})</span>
+                        <span>- Rs {voucherRedemption}</span>
+                      </div>
+                    )}
+
                     <div className="flex justify-between text-sm font-bold text-slate-900 pt-3 border-t border-slate-100">
                       <span>Payable Order Total</span>
-                      <span>Rs {Math.max(0, cartSubtotal + deliveryFee + handlingFee - (activeCouponDetails?.isValid ? activeCouponDetails.discountAmount : 0))}</span>
+                      <span>Rs {finalPayable}</span>
                     </div>
                   </div>
 
@@ -1491,7 +1690,7 @@ export default function CheckoutSimulator({
                     onClick={handleReservePromotion}
                     className="w-full bg-emerald-600 text-white hover:bg-emerald-700 text-center py-3.5 rounded-xl font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer mt-4 hover:-translate-y-0.5"
                   >
-                    Lock Coupon & Proceed (Rs {Math.max(0, cartSubtotal + deliveryFee + handlingFee - (activeCouponDetails?.isValid ? activeCouponDetails.discountAmount : 0))})
+                    Lock Coupon & Proceed (Rs {finalPayable})
                     <Lock className="w-4 h-4" />
                   </button>
 
@@ -1589,13 +1788,21 @@ export default function CheckoutSimulator({
                       <span>Rs {handlingFee}</span>
                     </div>
                   )}
-                  <div className="flex justify-between text-emerald-600 font-semibold bg-emerald-50/50 p-2 rounded-lg">
-                    <span>Locked Coupon Savings</span>
-                    <span>- Rs {lastSavedVoucherDeduction}</span>
-                  </div>
+                  {lastSavedVoucherDeduction > 0 && (
+                    <div className="flex justify-between text-emerald-600 font-semibold bg-emerald-50/50 p-2 rounded-lg">
+                      <span>Locked Coupon Savings</span>
+                      <span>- Rs {lastSavedVoucherDeduction}</span>
+                    </div>
+                  )}
+                  {voucherRedemption > 0 && (
+                    <div className="flex justify-between text-indigo-700 font-semibold bg-indigo-50/60 p-2 rounded-lg">
+                      <span>Voucher Redeemed ({appliedVouchers.length > 1 ? `${appliedVouchers.length} vouchers` : appliedVouchers[0]?.voucher_code})</span>
+                      <span>- Rs {voucherRedemption}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm font-black text-slate-900 pt-2.5 border-t border-slate-100">
                     <span>Amount Authorized</span>
-                    <span>Rs {Math.max(0, cartSubtotal + deliveryFee + handlingFee - lastSavedVoucherDeduction)}</span>
+                    <span>Rs {finalPayable}</span>
                   </div>
                 </div>
 
@@ -1606,7 +1813,7 @@ export default function CheckoutSimulator({
                     onClick={handleConfirmCheckout}
                     className="w-full bg-slate-950 hover:bg-slate-800 text-white text-center py-3.5 rounded-xl font-bold text-xs tracking-wide transition-all shadow-md flex items-center justify-center gap-2 cursor-pointer uppercase"
                   >
-                    Commit Transaction & Confirm Payment (Rs {Math.max(0, cartSubtotal + deliveryFee + handlingFee - lastSavedVoucherDeduction)})
+                    Commit Transaction & Confirm Payment (Rs {finalPayable})
                     <CheckCircle className="w-4 h-4 text-emerald-400" />
                   </button>
 
